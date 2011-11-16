@@ -11,3 +11,7 @@ from RegRegPipe import RegRegPipe
 from parameter_utility import (cni_find_trs_slices, define_leadouts, set_motion_labels,
                                set_standard_defaults, set_regreg_defaults,
                                set_variables)
+
+from PipeWrapper import PipeWrapper
+
+from SlaveMaster import (Master, Slave)

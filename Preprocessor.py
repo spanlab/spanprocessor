@@ -22,27 +22,45 @@ class Preprocessor:
         # required variables, initialized to empty for starts:
         self.data_type = data_type
         if self.data_type == 'cni':
-            self.required_vars = ['raw_anat','raw_funcs','anat_name','func_names',\
+            self.required_vars = ['anat_name','func_names',\
                                   'motion_labels','outdir','trs','nslices','tr_time',\
                                   'trxslices','leadin','leadouts','scripts_dir',\
-                                  'talairach_path','leadout','raw_funcs_alt']
+                                  'talairach_path','leadout']
+            self.optional_vars = ['raw_anat','raw_funcs','raw_funcs_alt']
         elif self.data_type == 'lucas':
             self.required_vars = ['leadin','leadout','talairach_path','scripts_dir',\
                                   'tr_time','outdir','func_names','anat_name',\
                                   'pfiles_by_func','tr_bytes','nslices']
+            self.optional_vars = []
         else:
             print 'ERROR: data_type keyword argument MUST be cni or lucas.\n\n'
-        self.current_dir = os.getcwd()
+        
+        # do tags, for run specifications:
+        self.do_anat_reconstruction = True
+        self.do_func_reconstruction = True
+        self.do_warp_anatomical = True
+        self.do_correct_motion = True
+        self.do_normalize = True
+        self.do_highpass_filter = True
+        self.do_warp_functionals = True
+        self.do_mask_functionals = True
+        self.do_convert_to_nifti = True
+        
+        
+        # completion tags:
         self.initialized_variables = False
         self.reconstructed_anat = False
         self.reconstructed_funcs = False
         self.warped_anatomical = False
         self.corrected_motion = False
+        self.normalized = False
+        self.highpass_filtered = False
         self.warped_functionals = False
         self.masked = False
         self.converted_to_nifti = False
         
     def initialize_variables(self,var_dict):
+        self.current_dir = os.getcwd()
         self.var_dict = var_dict
         for key, value in var_dict.items():
             setattr(self,key,value)
@@ -51,6 +69,9 @@ class Preprocessor:
                 print 'WARNING: %s was NOT included in the variable dictionary!\n' % var_name
                 print 'Not including %s may or may not break the pipeline.\n' % var_name
                 print 'Know what you are doing!\n'
+                setattr(self,var_name,False)
+        for var_name in self.optional_vars:
+            if not var_name in var_dict:
                 setattr(self,var_name,False)
         if self.data_type == 'lucas':
             # determine if the user has specified TRs:
@@ -86,11 +107,22 @@ class Preprocessor:
             if len(segment) != 0:
                 isstrip.append(segment)
         setattr(self,'isvalues',[abs(eval(isstrip[2])),abs(eval(isstrip[5]))])
+        
+    def __cni_find_raws(self,scan_nums):
+        raw_names = []
+        nii_files_zipped = glob.glob('*.nii.gz')
+        for nii in nii_files_zipped:
+            scan_num = int((nii.split('_'))[0])
+            if scan_num in scan_nums:
+                raw_names.append(nii)
+        return raw_names
     
     def reconstruct_anat(self,rawdir_searchexp='./*/'):
         if self.data_type == 'cni':
             general_cleaner(self.anat_name,1)
             # create afni anat from nifti:
+            if not self.raw_anat:
+                self.raw_anat = self.__cni_find_raws([self.anat_scan_num])[0]
             shell_command(['3dcopy',self.raw_anat,self.anat_name])
         elif self.data_type == 'lucas':
             # guess the rawdir based on the search expression.
@@ -168,6 +200,8 @@ class Preprocessor:
     def reconstruct_funcs(self):
         general_cleaner(self.func_names,1)
         if self.data_type == 'cni':
+            if not self.raw_funcs:
+                self.raw_funcs = self.__cni_find_raws(self.func_scan_nums)
             if len(self.raw_funcs) != len(self.func_names):
                 print('\nWARNING: Functional labels not equal to number of functionals.\n')
             else:
@@ -209,14 +243,35 @@ class Preprocessor:
         self.corrected_motion = True
         return suffix_out
     
-    def warp_functionals(self,suffix_in='m'):
+    def normalize(self,suffix_in='m',suffix_out='n',calc_precision='float'):
+        for i,epi in enumerate(self.func_names):
+            general_cleaner(epi+suffix_out,1)
+            general_cleaner(epi+'_average',1)
+            shell_command(['3dTstat','-prefix',epi+'_average',epi+suffix_in+'+orig'])
+            shell_command(['3drefit','-abuc',epi+'_average+orig'])
+            shell_command(['3dcalc','-datum',calc_precision,'-a',epi+suffix_in+'+orig',
+                           '-b',epi+'_average+orig','-expr','((a-b)/b)*100',
+                           '-prefix',epi+suffix_out])
+        self.normalized = True
+        return suffix_out
+    
+    def highpass_filter(self,suffix_in='n',suffix_out='f',highpass_val=.011):
+        for i,epi in enumerate(self.func_names):
+            general_cleaner(epi+suffix_out,1)
+            shell_command(['3dFourier','-prefix',epi+suffix_out,'-highpass',
+                           str(highpass_val),epi+suffix_in+'+orig'])
+        self.highpass_filtered = True
+        return suffix_out
+    
+    def warp_functionals(self,suffix_in='f'):
         for i,epi in enumerate(self.func_names):
             shell_command(['adwarp','-apar',self.anat_name+'+tlrc','-dpar',epi+suffix_in+'+orig', \
                              '-dxyz',str(self.talairach_dxyz)])
         self.warped_functionals = True
         return suffix_in
     
-    def mask(self,suffix_in='m',suffix_out='_masked'):
+    def mask(self,suffix_in='f',suffix_out='_masked'):
+        print os.getcwd()
         for epi in self.func_names:
             os.chdir('../'+self.scripts_dir)
             if not os.path.exists('./talairach_mask+tlrc.HEAD'):
@@ -246,13 +301,25 @@ class Preprocessor:
     
     def run(self):
         if self.initialized_variables:
-            self.reconstruct_anat()
-            self.reconstruct_funcs()
-            self.warp_anatomical()
-            self.correct_motion()
-            self.warp_functionals()
-            self.mask()
-            self.convert_to_nifti()
+            if self.do_anat_reconstruction == True:
+                self.reconstruct_anat()
+            if self.do_func_reconstruction == True:
+                self.reconstruct_funcs()
+            if self.do_warp_anatomical == True:
+                self.warp_anatomical()
+            if self.do_correct_motion == True:
+                self.correct_motion()
+            if self.do_normalize == True:
+                self.normalize()
+            if self.do_highpass_filter == True:
+                self.highpass_filter()
+            if self.do_warp_functionals == True:
+                self.warp_functionals()
+            if self.do_mask_functionals == True:
+                self.mask()
+            if self.do_convert_to_nifti == True:
+                self.convert_to_nifti()
+            
         
 
             

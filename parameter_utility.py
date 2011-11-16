@@ -2,6 +2,7 @@
 
 from mono_utility import (shell_command, parse_dirs)
 import sys, os
+import glob
 
 def set_standard_defaults(vars_dict):
     vars_dict['tr_time'] = 2.0
@@ -26,7 +27,6 @@ def set_regreg_defaults(vars_dict):
     vars_dict['lambda1'] = 11.
     vars_dict['bound1'] = 2.
     vars_dict['lambda2'] = 1.
-    #vars_dict['lambda3'] = 10000000.
     vars_dict['lambda3'] = 100000.
     vars_dict['bound3'] = 1.0e0
     vars_dict['inv_step'] = 15000.
@@ -34,19 +34,44 @@ def set_regreg_defaults(vars_dict):
     vars_dict['max_its'] = 400
     vars_dict['lookback'] = False
     vars_dict['lookback_trs'] = 0
+    vars_dict['use_mask'] = True
     
 def set_variables(vars_dict,**kwargs):
     for key,value in kwargs.iteritems():
         vars_dict[key] = value
 
+def cni_find_func_raws(vars_dict):
+    currentdir = os.getcwd()
+    if not 'subject_dirs' in vars_dict:
+        vars_dict['subject_dirs'] = parse_dirs(prefixes=vars_dict['subjects'])
+    os.chdir(vars_dict['subject_dirs'][0])
+    raw_names = []
+    nii_files_zipped = glob.glob('*.nii.gz')
+    for nii in nii_files_zipped:
+        scan_num = int((nii.split('_'))[0])
+        if scan_num in vars_dict['func_scan_nums']:
+            raw_names.append(nii)
+    os.chdir(currentdir)
+    if not raw_names == []:
+        vars_dict['raw_funcs'] = raw_names
+        return True
+    else:
+        return False
     
 def cni_find_trs_slices(vars_dict):
     # should convert this to use 're' module later...
-    if not 'raw_funcs' in vars_dict:
-        print 'ERROR: Cannot calculate TRs or slices without raw_funcs specified.\n'
-    elif not 'subjects' in vars_dict:
+    flag = True
+    if not 'subjects' in vars_dict:
         print 'ERROR: Cannot calculate TRs and slices without at least 1 subject specified.\n'
-    else:
+        flag = False
+    elif not 'raw_funcs' in vars_dict:
+        print 'No raw_funcs specified, attempting to acquire...\n'
+        if not 'func_scan_nums' in vars_dict:
+            print 'ERROR: Cannot calculate TRs or slices without func_scan_nums specified.\n'
+            flag = False
+        else:
+            flag = cni_find_func_raws(vars_dict)
+    if flag:
         print vars_dict['subjects']
         if not 'subject_dirs' in vars_dict:
             vars_dict['subject_dirs'] = parse_dirs(prefixes=vars_dict['subjects'])
