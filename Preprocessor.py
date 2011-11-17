@@ -6,6 +6,7 @@ import sys
 import glob
 import shutil
 import subprocess
+from pprint import pprint
 from mono_utility import (general_cleaner, shell_command)
 
 
@@ -46,7 +47,6 @@ class Preprocessor:
         self.do_mask_functionals = True
         self.do_convert_to_nifti = True
         
-        
         # completion tags:
         self.initialized_variables = False
         self.reconstructed_anat = False
@@ -59,9 +59,11 @@ class Preprocessor:
         self.masked = False
         self.converted_to_nifti = False
         
-    def initialize_variables(self,var_dict):
-        self.current_dir = os.getcwd()
+    def initialize_variables(self,var_dict,flags=False):
         self.var_dict = var_dict
+        if flags:
+            for key, value in flags.items():
+                setattr(self,key,value)
         for key, value in var_dict.items():
             setattr(self,key,value)
         for var_name in self.required_vars:
@@ -111,10 +113,24 @@ class Preprocessor:
     def __cni_find_raws(self,scan_nums):
         raw_names = []
         nii_files_zipped = glob.glob('*.nii.gz')
+        nii_num_pairs = []
         for nii in nii_files_zipped:
             scan_num = int((nii.split('_'))[0])
-            if scan_num in scan_nums:
-                raw_names.append(nii)
+            nii_num_pairs.append([nii,scan_num])
+        for num in scan_nums:
+            if type(num) == type([]):
+                raw_block = []
+                for sub_num in num:
+                    for pair in nii_num_pairs:
+                        if pair[1] == sub_num:
+                            raw_block.append(pair[0])
+                raw_names.append(raw_block)
+            else:
+                for pair in nii_num_pairs:
+                    if pair[1] == num:
+                        raw_names.append(pair[0])
+            #if scan_num in scan_nums:
+            #    raw_names.append(nii)
         return raw_names
     
     def reconstruct_anat(self,rawdir_searchexp='./*/'):
@@ -127,6 +143,7 @@ class Preprocessor:
         elif self.data_type == 'lucas':
             # guess the rawdir based on the search expression.
             # the default is the first directory in the subject directory... (typically works!)
+            currentdir = os.getcwd()
             rawdir = glob.glob(rawdir_searchexp)[0]
             os.chdir(rawdir)
             dicomdirs = glob.glob('./*/')
@@ -140,7 +157,7 @@ class Preprocessor:
             saginfo = self.__runto3d(saggitaldir,prefix=self.anat_name,keepfiles=True)
             axiinfo = self.__runto3d(axialdir,prefix='axialtemp',keepfiles=False)
             self.__isparse(axiinfo)
-            os.chdir(self.current_dir)
+            os.chdir(currentdir)
         self.reconstructed_anat = True
     
     def warp_anatomical(self):
@@ -148,6 +165,7 @@ class Preprocessor:
         shell_command(['@auto_tlrc','-warp_orig_vol','-suffix','NONE','-base', \
                         self.talairach_path,'-input',self.anat_name+'+orig.'])
         self.warped_anatomical = True
+        
        
     def __parse_psizes(self,pfiles):
         sizes = []
@@ -202,11 +220,19 @@ class Preprocessor:
         if self.data_type == 'cni':
             if not self.raw_funcs:
                 self.raw_funcs = self.__cni_find_raws(self.func_scan_nums)
+                pprint(self.raw_funcs)
             if len(self.raw_funcs) != len(self.func_names):
                 print('\nWARNING: Functional labels not equal to number of functionals.\n')
             else:
                 for i,(name,raw) in enumerate(zip(self.func_names,self.raw_funcs)):
-                    if os.path.exists('./'+raw):
+                    if type(raw) == type([]):
+                        for j,nraw in enumerate(raw):
+                            shell_command(['3dTcat','-prefix',name+str(j),nraw+'['+str(self.leadin)+'..'+str(self.leadouts[i][j])+']'])
+                        cat = [(name+str(j)+'+orig') for j in range(len(raw))]
+                        cmd = ['3dTcat','-prefix',name]
+                        cmd = cmd.extend(cat)
+                        shell_command(cmd)
+                    elif os.path.exists('./'+raw):
                         shell_command(['3dTcat','-prefix',name,raw+'['+str(self.leadin)+'..'+str(self.leadouts[i])+']'])
                     elif self.raw_funcs_alt:
                         cur_alt = self.raw_funcs_alt[i]
@@ -272,6 +298,7 @@ class Preprocessor:
     
     def mask(self,suffix_in='f',suffix_out='_masked'):
         print os.getcwd()
+        currentdir = os.getcwd()
         for epi in self.func_names:
             os.chdir('../'+self.scripts_dir)
             if not os.path.exists('./talairach_mask+tlrc.HEAD'):
@@ -282,7 +309,7 @@ class Preprocessor:
                                  self.talairach_path.split('/')[-1]])
                 shell_command(['3dAutomask','-prefix','talairach_mask','-clfrac','0.1','talairach_resamp+tlrc'])
                 shell_command(['3dAFNItoNIFTI','-prefix','talairach_mask','talairach_mask+tlrc'])
-            os.chdir(self.current_dir)
+            os.chdir(currentdir)
             general_cleaner(epi+suffix_out,1)
             shell_command(['3dcalc','-a',epi+suffix_in+'+tlrc','-b','../'+self.scripts_dir+'/talairach_mask+tlrc', \
                              '-expr', 'a*step(b)','-prefix',epi+suffix_out])

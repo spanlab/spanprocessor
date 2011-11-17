@@ -14,7 +14,7 @@ class Master:
         self.threads = threads
         self.vars = vars
     
-    def preprocess(self):
+    def preprocess(self,flags):
         inqueue = multiprocessing.Queue()
         outqueue = multiprocessing.Queue()
         for i,dir in enumerate(self.vars['subject_dirs']):
@@ -22,7 +22,7 @@ class Master:
         completed = []
         for i in range(self.threads):
             PreProc = api.Preprocessor(data_type=self.vars['data_type'])
-            PreProc.initialize_variables(self.vars)
+            PreProc.initialize_variables(self.vars,flags=flags)
             CurSlave = Slave(inqueue,outqueue,PreProc)
             CurSlave.start()
         

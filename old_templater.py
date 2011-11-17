@@ -4,13 +4,12 @@ import sys, os
 import glob
 import api
 from pprint import pprint
-'''
+
 dc = api.DirectoryCleaner(exclude_dirs=['exclude','scripts','spanprocessor','timecourses','ttest'])
-dc.remove('.err','.log','.REML_cmd','.tc')
-dc.move('.1D')
+dc.remove('.err','.log','.REML_cmd','.tc','.HEAD','.BRIK')
+#dc.move('.1D')
 
 '''
-
 # initialize variable dictionary:
 vars = {}
 
@@ -80,6 +79,7 @@ if data_type == 'cni':
     api.set_motion_labels(vars)
    
 pprint(vars)
+'''
 
 '''
 for dir in vars['subject_dirs']:
@@ -88,13 +88,13 @@ for dir in vars['subject_dirs']:
     SubProc.initialize_variables(vars)
     SubProc.run()
     os.chdir('../')
+'''
 
 '''
 RegReg = api.RegRegPipe()
 RegReg.initialize_variables(vars)
 RegReg.run()
-
-
+'''
 
 '''
 os.chdir('scripts')
