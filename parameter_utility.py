@@ -28,14 +28,18 @@ def kiefer_defaults(vars_dict):
     vars_dict['tr_time'] = 5.0
 
 def set_regreg_defaults(vars_dict):
+    # should only use either of the two bounds, for the other use the
+    # lagrange.
     vars_dict['lambda1'] = 11.
-    vars_dict['bound1'] = 2.
-    vars_dict['lambda2'] = 1.
-    vars_dict['lambda3'] = 100000.
+    # higher bound 1 -> more coefficients 
+    vars_dict['bound1'] = 0.0012
+    # higher lambda 2 -> more smoothness
+    vars_dict['lambda2'] = 1.5
+    vars_dict['lambda3'] = 0.
     vars_dict['bound3'] = 1.0e0
-    vars_dict['inv_step'] = 15000.
-    vars_dict['set_tol'] = 1e-6
-    vars_dict['max_its'] = 400
+    vars_dict['inv_step'] = 1500000.
+    vars_dict['set_tol'] = 1e-10
+    vars_dict['max_its'] = 1000
     vars_dict['lookback'] = False
     vars_dict['lookback_trs'] = 0
     vars_dict['use_mask'] = True
