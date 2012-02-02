@@ -1,14 +1,17 @@
+
 #!/usr/bin/env python
 
 from pprint import pprint
 import subprocess
 import sys, os
+import random
 import numpy as np
 import scipy as sp
 from scipy import sparse
 from scipy import io
 import nibabel as nib
 import regreg.api as rr
+from regreg.affine import selector
 import regreg.mask as mask
 from mono_utility import (general_cleaner, shell_command)
 
@@ -37,7 +40,10 @@ class RegRegPipe:
         self.problem_solved = False
         self.output_complete = False
         
-    
+        self.vecfile1 = open('vec1output.txt','w')
+        self.vecfile2 = open('vec2output.txt','w')
+        
+
     def initialize_variables(self,var_dict):
         self.lookback = False
         self.lookback_trs = 0
@@ -65,21 +71,27 @@ class RegRegPipe:
         setattr(self,'raw_data_shape',[])
         setattr(self,'raw_data_list',[])
         setattr(self,'raw_affine',[])
+        if type(self.reg_nifti_name) != type ([]):
+            self.reg_nifti_name = [self.reg_nifti_name]
         for subject in self.reg_subjects:
             os.chdir(subject)
             print os.getcwd()
-            [idata,affine,ishape] = self.__load_nifti(self.reg_nifti_name)
-            if self.reg_experiment_trs == False:
-                self.reg_experiment_trs = len(idata[3])
-            if self.reg_total_trials == False:
-                if self.reg_trial_trs:
-                    self.reg_total_trials = self.reg_experiment_trs/self.reg_trial_trs
-            self.raw_data_list.append(np.array(idata))
-            if self.raw_affine == []:
-                self.raw_affine = affine
-            if self.raw_data_shape == []:
-                self.raw_data_shape = ishape
-                pprint(ishape)
+            for nifti_name in self.reg_nifti_name:
+                pprint(nifti_name)
+                if os.path.exists(nifti_name):
+                    [idata,affine,ishape] = self.__load_nifti(nifti_name)
+                    pprint(ishape)
+                    if self.reg_experiment_trs == False:
+                        self.reg_experiment_trs = len(idata[3])
+                    if self.reg_total_trials == False:
+                        if self.reg_trial_trs:
+                            self.reg_total_trials = self.reg_experiment_trs/self.reg_trial_trs
+                    self.raw_data_list.append(np.array(idata))
+                    if self.raw_affine == []:
+                        self.raw_affine = affine
+                    if self.raw_data_shape == []:
+                        self.raw_data_shape = ishape
+                        pprint(ishape)
             os.chdir('../')
         self.loaded_nifti_data = True
         
@@ -96,11 +108,15 @@ class RegRegPipe:
     def parse_resp_vecs(self):
         setattr(self,'resp_vecs',[])
         setattr(self,'onset_vecs',[])
+        if type(self.reg_resp_vec_name) != type([]):
+            self.reg_resp_vec_name = [self.reg_resp_vec_name]
         for subject in self.reg_subjects:
             os.chdir(subject)
             print os.getcwd()
-            resp_array = self.__parse_vector(self.reg_resp_vec_name)
-            self.resp_vecs.append(resp_array)
+            for resp_vec in self.reg_resp_vec_name:
+                if os.path.exists(resp_vec):
+                    resp_array = self.__parse_vector(resp_vec)
+                    self.resp_vecs.append(resp_array)
             if self.dynamic_iti:
                 onset_vec = self.__parse_vector(self.reg_onset_vec_name)
                 self.onset_vecs.append(onset_vec)
@@ -115,7 +131,7 @@ class RegRegPipe:
                            self.mask_shape[2],self.reg_prediction_tr_len],np.bool)
         for i in range(self.reg_prediction_tr_len):
             self.m[:,:,:,i] = self.mask_data[:,:,:]
-        self.p = np.sum(self.m)
+        #self.p = np.sum(self.m)
         if self.reg_mask_dir: os.chdir(currentdir)
         self.created_reg_mask = True
         
@@ -132,16 +148,88 @@ class RegRegPipe:
         # this list comprehension is pretty nasty, but basically it goes through
         # the number of trials-1, multiplies that trial by the TR that the
         # response lands on to get the index of the response TR.
-        # Yikes.
         
         # Non-dynamic iti function is a bit obsolete. Probably works but needs
         # updating:
+        
+        
+        
         if not self.dynamic_iti:
+            difference = self.reg_trial_trs-self.reg_prediction_tr_len
+            respdiff = self.reg_trial_trs-self.reg_response_tr
+            
             for (data,respvec) in zip(self.raw_data_list,self.resp_vecs):
-                for i in range(self.reg_total_trials-1):  
-                    trial = data[:,:,:,(self.lag+i*self.reg_trial_trs):(self.lag+(i+1)*self.reg_trial_trs)]
-                    self.design.append(trial[self.m])
-                self.Y.extend(respvec[[(y+1)*(self.reg_response_tr-1) for y in range(self.reg_total_trials-1)]])
+                
+                temp_trials = []
+                positive_trial_ind = []
+                negative_trial_ind = []
+                min_limit = 0
+
+                
+                for i in range(self.reg_total_trials-1):
+                    # without downsampling:
+                    #trial = data[:,:,:,(self.lag+i*self.reg_trial_trs):(self.lag+(i+1)*self.reg_trial_trs-difference)]
+                    #self.design.append(trial[self.m])
+                    
+                    # with downsampling:
+                    temp_trials.append(data[:,:,:,(self.lag+i*self.reg_trial_trs):(self.lag+(i+1)*self.reg_trial_trs-difference)])
+                    
+                    #print(len(self.design))
+                
+                # calculate the response vector:
+                parsed_resp_vec = respvec[[((y+1)*(self.reg_trial_trs))-respdiff-1 for y in range(self.reg_total_trials-1)]]
+                
+                # without downsampling:
+                #self.Y.extend(parsed_resp_vec)
+                
+                # downsampling response categorization:
+                for i,response in enumerate(parsed_resp_vec):
+                    print response
+                    if float(response) > 0:
+                        positive_trial_ind.append(i)
+                    elif float(response) < 0:
+                        negative_trial_ind.append(i)
+                        
+                print 'positive trials:'
+                print positive_trial_ind
+                print 'negative trials:'
+                print negative_trial_ind
+                
+                print 'shuffling:'
+                
+                if len(positive_trial_ind) > len(negative_trial_ind):
+                    min_limit = len(negative_trial_ind)
+                    random.shuffle(positive_trial_ind)
+                elif len(negative_trial_ind) > len(positive_trial_ind):
+                    min_limit = len(positive_trial_ind)
+                    random.shuffle(negative_trial_ind)
+                elif len(negative_trial_ind) == len(positive_trial_ind):
+                    min_limit = len(negative_trial_ind)
+                    
+                print 'positive trials:'
+                print positive_trial_ind
+                print 'negative trials:'
+                print negative_trial_ind
+                print 'limiting trial length: %s' % str(min_limit)
+                    
+                for i in range(min_limit):
+                    positive_trial = temp_trials[positive_trial_ind[i]]
+                    negative_trial = temp_trials[negative_trial_ind[i]]
+                    self.design.append(positive_trial[self.m])
+                    self.design.append(negative_trial[self.m])
+                    self.Y.append(1)
+                    self.Y.append(-1)
+                
+                print 'design length: %s ' % str(len(self.design))
+                print 'response length: %s' % str(len(self.Y))
+                
+                
+                # record of trial responses in text file:
+                for j in range(self.reg_total_trials-1):
+                    self.vecfile1.write(str(respvec[(j+1)*(self.reg_trial_trs)-respdiff-1])+'\n')
+                    self.vecfile2.write(str(respvec[(j+1)*(self.reg_trial_trs)-respdiff-1])+'\n')
+                #print self.Y
+                    
         
         elif self.dynamic_iti:
             for (data,respvec,onsetvec) in zip(self.raw_data_list,self.resp_vecs,self.onset_vecs):
@@ -173,7 +261,7 @@ class RegRegPipe:
     
     def normalize(self):
         self.design = np.array(self.design)
-        self.X_nonnorm = self.design
+        #self.X_nonnorm = self.design
         #pprint(self.design.shape)
         #self.X_nonnorm = np.vstack(self.design)
         #pprint(self.X_nonnorm.shape)
@@ -182,16 +270,25 @@ class RegRegPipe:
         #for x in temp:
         #    pprint(x)
         #self.X = (self.X_nonnorm - np.mean(self.X_nonnorm,axis=0))/np.std(self.X_nonnorm,axis=0)
-        self.X = self.X_nonnorm
         
-        #self.X = rr.normalize(self.X_nonnorm,center=True,scale=True)
+
+        _design_zero_columns = (self.design**2).sum(0) == 0
+        self.zero_mask = rr.selector(_design_zero_columns, self.design.shape[1:])
+        # self.X = self.design
+        
+        self.X = rr.normalize(self.design,center=True,scale=True)
+        self.p = self.X.primal_shape
         pprint(self.X)
         self.normalized = True
     
     def define_loss(self,set_coef=0.5):
-        self.Y = np.array(self.Y)
-        self.loss = rr.quadratic.affine(self.X,-self.Y,coef=set_coef)
-        #self.loss = rr.l2norm.affine(self.X,-self.Y,lagrange=set_lagrange)
+        self.Y_signs = np.array(self.Y)
+        self.Y_binary = (self.Y_signs + 1) / 2.
+        self.quadratic_loss = rr.quadratic.affine(self.X,-self.Y_signs,coef=set_coef)
+        self.logistic_loss = rr.logistic_loglikelihood.linear(self.X,successes=self.Y_binary,coef=set_coef)
+        self.huber_loss = rr.huber_loss.linear(self.X,delta=0.3,coef=set_coef)
+        #self.loss = rr.l2norm.affine(self.X,-self.Y_signs,lagrange=set_lagrange)
+        self.loss = self.logistic_loss
         self.loss_defined = True
         
     def define_ridge(self,set_coef=None):
@@ -248,10 +345,10 @@ class RegRegPipe:
         if ridge is None:
             ridge = self.ridge
         if sparsity is None:
-            sparsity = self.sparsity_bound
-            #sparsity = self.sparsity
+            #sparsity = self.sparsity_bound
+            sparsity = self.sparsity
         if graphnet is None:
-            graphnet = self.glasso_bound_smooth
+            graphnet = self.graphnet
             #graphnet = self.graphnet
         #set up the problem object:
         self.problem = rr.container(loss,ridge,sparsity,graphnet)
@@ -264,15 +361,29 @@ class RegRegPipe:
 
     def solve_problem(self):
         #solve the problem:
+        #try: 
         self.solver.fit(tol=self.set_tol,start_inv_step=self.inv_step,max_its=self.max_its)
         #grab the coefficients:
         self.solution = self.solver.composite.coefs
         #pprint('solution:')
+        pprint('l1 norm: %f' % np.fabs(self.solution).sum())
         #pprint(self.solution.shape)
         #reshape the data!!
+
+        #find the linear predictor, and predicted values
+        Xbeta = self.X.linear_map(self.solution)
+        #predicted values are determined by sign of Xbeta for squared error, logistic and robust graph net 
+        #losses
+        labels = np.sign(Xbeta)
+        accuracy = (labels == self.Y_signs).sum() * 1. / labels.shape[0]
+        print 'accuracy', accuracy
+
         if self.use_mask:
             self.solution_shaped = np.zeros((self.mask_shape[0],self.mask_shape[1],
                                              self.mask_shape[2],self.reg_prediction_tr_len))
+            #_solution_with_zeros = np.zeros(self.m.shape)
+            #_solution_with_zeros[~self._design_zero_columns] = 
+            #self.solution_shaped[np.where(self.m)] = _solution_with_zeros
             self.solution_shaped[np.where(self.m)] = self.solution
         else:
             self.solution_shaped = self.solution.reshape(self.raw_data_shape[0],
@@ -282,9 +393,11 @@ class RegRegPipe:
         self.problem_solved = True
     
     def output_nii(self):
-        output_filename = 'rr_%(n)sn_r%(ridge)1.1e_s%(sparsity)1.1e_g%(graph)1.1e' % \
-                          {'n':len(self.reg_subjects),'ridge':self.lambda2,'sparsity':self.lambda1,\
-                           'graph':self.lambda3}
+        os.chdir(self.scripts_dir)
+        #output_filename = 'rr_%(n)sn_r%(ridge)1.1e_s%(sparsity)1.1e_g%(graph)1.1e' % \
+        #                  {'n':len(self.reg_subjects),'ridge':self.lambda2,'sparsity':self.lambda1,\
+        #                   'graph':self.lambda3}
+        output_filename = 'reg13_paperparams'
         if self.use_mask:
             newnii = nib.Nifti1Image(self.solution_shaped,self.mask_affine)
         else:
@@ -292,7 +405,9 @@ class RegRegPipe:
         general_cleaner(output_filename+'.nii',0)
         general_cleaner(output_filename,1)
         newnii.to_filename(output_filename+'.nii')
-        #shell_command(['3dcopy',output_filename+'nii',output_filename])
+        #EXTRA:
+        shell_command(['3dcopy',output_filename+'.nii',output_filename])
+        shell_command(['adwarp','-apar','TT_N27+tlrc','-dpar',output_filename+'+orig','-overwrite'])
         self.output_complete = True
         
     def try_output(self):
@@ -310,7 +425,6 @@ class RegRegPipe:
             self.create_reg_mask()
             self.combine_data_vectors()
             self.normalize()
-            #self.try_output()
             self.define_loss()
             self.define_ridge()
             self.define_sparsity()
@@ -319,7 +433,8 @@ class RegRegPipe:
             self.define_problem()
             self.solve_problem()
             self.output_nii()
-            
+            self.vecfile1.close()
+            self.vecfile2.close()
         else:
             print '\nERROR: Impossible to run() without initializing variables.\n'
         

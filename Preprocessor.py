@@ -34,7 +34,7 @@ class Preprocessor:
                                   'pfiles_by_func','tr_bytes','nslices']
             self.optional_vars = []
         else:
-            print 'ERROR: data_type keyword argument MUST be cni or lucas.\n\n'
+            print 'ERROR: data_type keyword argument must be cni or lucas.\n\n'
         
         # do tags, for run specifications:
         self.do_anat_reconstruction = True
@@ -213,7 +213,7 @@ class Preprocessor:
         for name in self.func_names:
             shell_command(['3dTshift','-slice','0','-prefix',name+suffix_out,name+suffix_in+'+orig'])
             general_cleaner(name+suffix_in,1)
-        return 
+        return True
     
     def reconstruct_funcs(self):
         general_cleaner(self.func_names,1)
