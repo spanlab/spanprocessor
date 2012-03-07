@@ -1,17 +1,27 @@
 #!/usr/bin/env python
 
-from DirectoryCleaner import DirectoryCleaner
 
-from mono_utility import (shell_command, general_cleaner, parse_dirs)
+import os
+import glob
+import sys
+import pkgutil
+import re
 
-from Preprocessor import Preprocessor
 
-from RegRegPipe import RegRegPipe
+# import functions/classes from utilities folder:
+from processor.utilities.shell_command import shell_command
+from processor.utilities.parse_dirs import parse_dirs
+from processor.utilities.general_cleaner import general_cleaner
+from processor.utilities import DirectoryCleaner
 
-from parameter_utility import (cni_find_trs_slices, define_leadouts, set_motion_labels,
-                               set_standard_defaults, set_regreg_defaults,
-                               set_variables)
+# load up primary classes:
+from processor.SorcerersApprentice import (SorcerersApprentice, Worker)
 
-from PipeWrapper import PipeWrapper
+from processor.Pipe import Pipe
 
-from SlaveMaster import (Master, Slave)
+from processor.afni.AfniProcess import AfniProcess
+
+from processor.afni.AfniBase import *
+
+from processor.afni.PyAfni import *
+

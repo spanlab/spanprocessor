@@ -1,35 +1,30 @@
 #!/usr/bin/env python
 
-from pprint import pprint
-from mono_utility import (shell_command, parse_dirs)
-import sys, os
-import glob
 
 
-class Variables():
-    def __init__(self):
+class Variables(dict):
+    
+    def __init__(self,*args,**kwargs):
+        dict.__init__(self,*args,**kwargs)
+        
+    
+    def __setitem__(self, key, val):
+        dict.__setitem__(self, key, val)
+        setattr(self, key, val)
+        
+    def __setattr__(self, name, val):
+        dict.__setattr__(self, name, val)
+        dict.__setitem__(self, name, val)
+        
+    
+        
+        
         self.talairach_path_osx = '/Users/span/abin/TT_N27+tlrc'
         self.talairach_path_linux = '/usr/local/afni/bin/TT_N27+tlrc'
         if sys.platform == 'linux2':
             self.talairach_path = self.talairach_path_linux
         elif sys.platform == 'darwin':
             self.talairach_path = self.talairach_path_osx
-    
-        
-    def set(self,**kwargs):
-        for arg,val in kwargs.items():
-            setattr(self,argument,value)
-        
-        
-    def check(self,*args):
-        output = []
-        for var_name in args:
-            if not getattr(self,var_name,None):
-                print(var_name+' is not set, or is None.\n')
-                output.append(None)
-            else:
-                output.append(getattr(self,var_name))
-        return output
     
     
     def set_knutson_defaults(self):
@@ -45,23 +40,6 @@ class Variables():
         self.tr_bytes = 393216
         self.outdir = './'
         
-        
-    def set_regreg_defaults(self):
-        # should only use either of the two bounds, for the other use the
-        # lagrange.
-        self.lambda1 = 11.
-        # higher bound 1 -> more coefficients 
-        self.bound1 = 0.0012
-        # higher lambda 2 -> more smoothness
-        self.lambda2 = 1.5
-        self.lambda3 = 0.
-        self.bound3 = 1.0e0
-        self.inv_step = 1500000.
-        self.set_tol = 1e-10
-        self.max_its = 1000
-        self.lookback = False
-        self.lookback_trs = 0
-        self.use_mask = True
     
     def cni_find_raw_functionals(vars_dict):
         proceed = True

@@ -1,0 +1,1 @@
+{"anat_name": "anat", "motionfile_prefix": "3dmotion", "tr_bytes": 393216, "talairach_dxyz": 2.9, "dynamic_iti": true, "scripts_dir": "scripts", "talairach_path_linux": "/usr/local/afni/bin/TTN27+tlrc", "talairach_path_osx": "/Users/span/abin/TT_N27+tlrc", "leadout": 4.0, "tr_time": 2.0, "leadin": 6.0}

@@ -1,0 +1,145 @@
+foreach subject ( subject1 subject2 subject3 )
+
+
+	cd ../${subject}*
+
+
+	#* Blur Functionals:
+
+	# Clean-up:
+	foreach file ( templateb ) 
+		if ( -e ${file}+orig.BRIK ) then
+			rm -rf ${file}+orig*
+		endif
+		if ( -e ${file}+tlrc.BRIK ) then
+			rm -rf ${file}+tlrc*
+		endif
+	end
+
+	3dmerge -doall -prefix templateb -1blur_fwhm 4 template+orig
+	
+
+
+	#* Convert from AFNI to Nifti:
+
+	3dAFNItoNIFTI -prefix templateb templateb+tlrc
+	
+
+
+	#* Motion Correction:
+
+	# Clean-up:
+	foreach file ( motionlabel.1D ) 
+		if ( -e ${file} ) then
+			rm -rf ${file}
+		endif
+	end
+
+	# Clean-up:
+	foreach file ( templateb_m ) 
+		if ( -e ${file}+orig.BRIK ) then
+			rm -rf ${file}+orig*
+		endif
+		if ( -e ${file}+tlrc.BRIK ) then
+			rm -rf ${file}+tlrc*
+		endif
+	end
+
+	3dvolreg -dfile motionlabel.1D -base 3 -prefix templateb_m -twopass -Fourier templateb+orig
+	
+
+
+	#* Highpass Filter:
+
+	# Clean-up:
+	foreach file ( templateb_mf ) 
+		if ( -e ${file}+orig.BRIK ) then
+			rm -rf ${file}+orig*
+		endif
+		if ( -e ${file}+tlrc.BRIK ) then
+			rm -rf ${file}+tlrc*
+		endif
+	end
+
+	3dFourier -highpass 0.011 -prefix templateb_mf templateb_m+orig
+	
+
+
+	#* Normalize functional data:
+
+	# Clean-up:
+	foreach file ( templateb_mfn ) 
+		if ( -e ${file}+orig.BRIK ) then
+			rm -rf ${file}+orig*
+		endif
+		if ( -e ${file}+tlrc.BRIK ) then
+			rm -rf ${file}+tlrc*
+		endif
+	end
+
+	# Clean-up:
+	foreach file ( templateb_mf_average ) 
+		if ( -e ${file}+orig.BRIK ) then
+			rm -rf ${file}+orig*
+		endif
+		if ( -e ${file}+tlrc.BRIK ) then
+			rm -rf ${file}+tlrc*
+		endif
+	end
+
+	3dTstat -prefix templateb_mf_average templateb_mf+orig
+	3drefit -abuc templateb_mf_average+orig
+	3dcalc -a templateb_mf+orig -c -b templateb_mf_average+orig -expr ((a-b)/b)*100 -prefix templateb_mfn -datum float
+	
+
+
+	#* Reconstruct anatomicals:
+
+	# Clean-up:
+	foreach file ( anat ) 
+		if ( -e ${file}+orig.BRIK ) then
+			rm -rf ${file}+orig*
+		endif
+		if ( -e ${file}+tlrc.BRIK ) then
+			rm -rf ${file}+tlrc*
+		endif
+	end
+
+	3dcopy 001_T1.nii.gz anat
+	
+
+
+	#* Reconstruct functionals:
+
+	# Clean-up:
+	foreach file ( templateb_mfn ) 
+		if ( -e ${file}+orig.BRIK ) then
+			rm -rf ${file}+orig*
+		endif
+		if ( -e ${file}+tlrc.BRIK ) then
+			rm -rf ${file}+tlrc*
+		endif
+	end
+
+	3dTcat -prefix templateb_mfn raw1.nii[4..6] raw2.nii[4..6]
+	
+
+
+	#* Warp anatomical:
+
+	@auto_tlrc -suffix NONE -base ../scripts -input anat+orig -warp_orig_vol
+	
+
+
+	#* Warp functional:
+
+	adwarp -dpar templateb_mfn+orig -apar anat+tlrc -dxyz
+	
+
+
+end
+
+
+
+
+
