@@ -4,6 +4,7 @@ import sys, os
 import glob
 import api
 from pprint import pprint
+from MiniGridsearch import MiniGridsearch as MG
 
 #dc = api.DirectoryCleaner(exclude_dirs=['exclude','scripts','spanprocessor','timecourses','ttest'])
 #dc.remove('.err','.log','.REML_cmd','.tc','.HEAD','.BRIK')
@@ -77,15 +78,16 @@ if data_type == 'cni':
     # reg reg vars:
     # should only use either of the two bounds, for the other use the
     # lagrange.
-    vars['lambda1'] = 68.
+    #vars['lambda1'] = 68.
     # higher bound 1 -> more coefficients 
-    vars['bound1'] = 1.0
+    vars['bound1'] = 2.
+    vars['bound2'] = 1.
+    vars['bound3'] = 31.
     # higher lambda 2 -> more smoothness
-    vars['lambda2'] = 1000.0
-    vars['lambda3'] = 100.
-    vars['bound3'] = 1.0e0
+    #vars['lambda2'] = 1000.0
+    vars['lambda3'] = 1000.
     vars['inv_step'] = 1500000.
-    vars['set_tol'] = 1e-07
+    vars['set_tol'] = 1e-04
     vars['max_its'] = 1000
     vars['lookback'] = False
     vars['lookback_trs'] = 0
@@ -95,13 +97,30 @@ if data_type == 'cni':
     vars['reg_resp_vec_name'] = ['choice12.1D','choice34.1D']
     vars['reg_onset_vec_name'] = 'trialonsets.1D'
     vars['reg_response_tr'] = 7
+    vars['trs_of_interest'] = [1,2,3,4,5] 
     vars['reg_subjects'] = vars['subject_dirs']
     vars['reg_total_trials'] = 40
     vars['reg_prediction_tr_len'] = 5
     vars['lag'] = 2
     vars['reg_trial_trs'] = 7
-    vars['reg_mask_dir'] = scripts_dir
-    #vars['use_mask'] = False
+
+    vars['reg_mask_dir'] = 'reg_output'
+    vars['reg_save_dir'] = 'reg_output'
+    vars['random_seed'] = 217189111
+    vars['warm_start'] = True
+    vars['crossvalidation_folds'] = 1
+    # type either trial or subject:
+    vars['crossvalidation_type'] = 'subject'
+    vars['downsample_type'] = 'subject'
+    vars['with_replacement'] = True
+    
+    vars['loss'] = 'quadratic'
+    vars['penalties'] = ['sparsity_bound', 'graphnet_bound_smooth', 'ridge_bound_smooth','graphnet']
+    
+    vars['output_filename'] = 'sh_%s_%s_%s_%s' % (str(vars['bound1']),
+                                                 str(vars['bound2']),
+                                                 str(vars['bound3']),
+                                                 str(vars['lambda3']))
     
 # generate additional variables:
 
@@ -110,26 +129,18 @@ if data_type == 'cni':
 #    api.define_leadouts(vars)
 #    api.set_motion_labels(vars)
    
-pprint(vars)
-
-'''
-for dir in vars['subject_dirs']:
-    os.chdir(dir)
-    SubProc = api.Preprocessor(data_type=data_type)
-    SubProc.initialize_variables(vars)
-    SubProc.run()
-    os.chdir('../')
-'''
+   
+#vars['reg_resp_vec_name'] = 'achoosepos.1D'
+#vars['reg_onset_vec_name'] = 'aposp.1D'
 
 RegReg = api.RegRegPipe()
-RegReg.initialize_variables(vars)
-RegReg.run()
+
+minigrid = MG(vars, RegReg, prefix='wrsub')
+minigrid.run()
+
+#RegReg.initialize_variables(vars)
+#RegReg.run()
 
 
-#os.chdir('scripts')
-#tempProc = api.Preprocessor(data_type=data_type)
-#tempProc.initialize_variables(vars)
-#tempProc.mask()
 
-#pprint(vars)
-#pprint(SubProc.__dict__)
+
