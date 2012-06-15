@@ -3,8 +3,10 @@
 import sys, os
 import glob
 import api
+from RegRegPipe_n import RegRegPipe, RRData
 from pprint import pprint
 from MiniGridsearch import MiniGridsearch as MG
+import profile
 
 #dc = api.DirectoryCleaner(exclude_dirs=['exclude','scripts','spanprocessor','timecourses','ttest'])
 #dc.remove('.err','.log','.REML_cmd','.tc','.HEAD','.BRIK')
@@ -25,6 +27,9 @@ data_type = 'cni'
 #            'hh011006','jd011006','jh110105f','jh111705c','kp082205c',
 #            'kp083105f','mc100605c','mc101205f']
 
+
+# TOOK OUT wh101005c, no completed data
+# RENAMED choice12.1D to _choice12.1D for ng120605, cause no pop12 data file!
 subjects = ['jh111705c','jh112205','kp082205c','kp083105f',
             'rc112905','cw112205','db110905f','se090105c','db111605c',
             'mc100605c','se090605f','mc101205f','sn020806','ds090605f',
@@ -32,7 +37,7 @@ subjects = ['jh111705c','jh112205','kp082205c','kp083105f',
             'st110805f','eh111005c','mm020606','eh112905f','tf120805f',
             'et081905c','tf121505c','et090105f','tv080707','hh011006',
             'nb081005f','we081905f','nb081705c','we083105c','nc081005f',
-            'wh100405c','nc081705c','wh101005f','jd011006','nd020806',
+            'wh100405f','nc081705c','jd011006','nd020806',
             'jh110105f','ng120605']
 
 
@@ -48,22 +53,18 @@ vars['subjects'] = subjects
 api.set_standard_defaults(vars)
 #api.set_regreg_defaults(vars)
 
-# running from scripts directory?
-run_from_scripts_dir = True
 
-# scripts directory name (OPTIONAL):
-scripts_dir = 'reg_output'
-vars['scripts_dir'] = scripts_dir
 
-# change directory if neccessary:
-if run_from_scripts_dir:
-    os.chdir('../')
+
 
 
 # load in variables:
 if data_type == 'cni':
     if subjects:
+        os.chdir('..')
         vars['subject_dirs'] = api.parse_dirs(prefixes=subjects)
+        os.chdir('spanprocessor')
+        print vars['subject_dirs']
     elif exclude_dirs:
         vars['subject_dirs'] = api.parse_dirs(exclude=exclude_dirs)
     #vars['raw_funcs'] = raw_funcs
@@ -104,8 +105,7 @@ if data_type == 'cni':
     vars['lag'] = 2
     vars['reg_trial_trs'] = 7
 
-    vars['reg_mask_dir'] = 'reg_output'
-    vars['reg_save_dir'] = 'reg_output'
+    
     vars['random_seed'] = 217189111
     vars['warm_start'] = True
     vars['crossvalidation_folds'] = 1
@@ -117,10 +117,25 @@ if data_type == 'cni':
     vars['loss'] = 'quadratic'
     vars['penalties'] = ['sparsity_bound', 'graphnet_bound_smooth', 'ridge_bound_smooth','graphnet']
     
-    vars['output_filename'] = 'sh_%s_%s_%s_%s' % (str(vars['bound1']),
+    vars['output_filename'] = 'v2_%s_%s_%s_%s' % (str(vars['bound1']),
                                                  str(vars['bound2']),
                                                  str(vars['bound3']),
                                                  str(vars['lambda3']))
+    
+    
+    vars['reg_mask_dir'] = 'reg_output'
+    vars['reg_save_dir'] = 'reg_output'
+    
+    vars['top_dir'] = os.path.split(os.getcwd())[0]
+    # scripts directory name (OPTIONAL):
+    vars['scripts_dir'] = os.path.join(vars['top_dir'], 'spanprocessor')
+    vars['save_dir'] = os.path.join(vars['top_dir'], 'reg_output')
+    vars['reg_mask_dir'] = os.path.join(vars['top_dir'], 'reg_output')
+    vars['bin_dir'] = os.path.join(vars['save_dir'], 'reg_bin')
+    vars['records_dir'] = os.path.join(vars['save_dir'], 'records')
+    vars['memmap_name'] = 'raw_data.npy'
+    vars['sparse_matrix_name'] = 'sparse_matrix.mat'
+    vars['affine_name'] = 'raw_affine.npy'
     
 # generate additional variables:
 
@@ -133,13 +148,17 @@ if data_type == 'cni':
 #vars['reg_resp_vec_name'] = 'achoosepos.1D'
 #vars['reg_onset_vec_name'] = 'aposp.1D'
 
-RegReg = api.RegRegPipe()
+print vars['reg_subjects']
 
-minigrid = MG(vars, RegReg, prefix='wrsub')
-minigrid.run()
+rrdata = RRData(vars)
+rrdata.instantiate_all()
 
-#RegReg.initialize_variables(vars)
-#RegReg.run()
+RegReg = RegRegPipe(rrdata)
+RegReg.run()
+
+#minigrid = MG(vars, RegReg, prefix='wrsub')
+#minigrid.run()
+
 
 
 

@@ -2,7 +2,7 @@
 
 from pprint import pprint
 import subprocess
-import glob
+import glob, gc
 import sys, os
 import random
 import itertools
@@ -20,102 +20,55 @@ import regreg.mask as mask
 from mono_utility import (general_cleaner, shell_command)
 
 
-class RegRegPipe(object):
-    def __init__(self):
-        
-        self.required_vars = ['reg_nifti_name','reg_mask_name','reg_resp_vec_name',
-                              'reg_onset_vec_name','reg_response_tr','reg_subjects',
-                              'reg_total_trials','reg_prediction_tr_len','reg_mask_dir',
-                              'lag','reg_experiment_trs','reg_trial_trs','scripts_dir',
-                              'dynamic_iti','lambda1','bound1','lambda2','lambda3','bound3',
-                              'inv_step','set_tol','max_its','lookback','lookback_trs',
-                              'use_mask','output_filename','random_seed','downsample_type',
-                              'warm_start','reg_save_dir','crossvalidation_folds']
-        
-        
+
+
+
+class RRData(object):
     
-    def initialize_variables(self,var_dict):
+    def __init__(self, vars):
+        super(RRData, self).__init__()
+        self._instantiate_vars(vars)
 
-        self.var_dict = var_dict
         
-        for key, value in var_dict.items():
-            setattr(self,key,value)
+    def _instantiate_vars(self, vars):
+        self.vars = vars
+        
+        for key, value in self.vars.items():
+            setattr(self, key, value)
             
-        for var_name in self.required_vars:
-            if not var_name in var_dict:
-                print 'WARNING: %s was NOT included in the variable dictionary!\n' % var_name
-                print 'Not including %s may or may not break the pipeline.\n' % var_name
-                print 'Know what you are doing!\n'
-                setattr(self,var_name,False)
-        
-
         for attribute in ('raw_data_shape','raw_data_list','raw_affine','design',
                           'Y','resp_vecs','onset_vecs'):
-            #if getattr(self,attribute,None):
             setattr(self,attribute,[])
-    
-        self.top_dir = os.getcwd()
-        self.save_dir = os.path.join(self.top_dir,self.reg_save_dir)
-        self.bin_dir = os.path.join(self.save_dir,'reg_bin')
-        self.records_dir = os.path.join(self.save_dir,'records')
-        
+            
         if not os.path.exists(self.save_dir):
             os.mkdir(self.save_dir)
         if not os.path.exists(self.bin_dir):
             os.mkdir(self.bin_dir)
         if not os.path.exists(self.records_dir):
             os.mkdir(self.records_dir)
-        
+            
         if type(self.reg_nifti_name) != type ([]):
             self.reg_nifti_name = [self.reg_nifti_name]
         if type(self.reg_resp_vec_name) != type([]):
             self.reg_resp_vec_name = [self.reg_resp_vec_name]
             
-        if not getattr(self,'crossvalidation_type',None):
-            setattr(self,'crossvalidation_type','subject')
-            
-        self.total_nifti_files = 0
         self.subject_trial_indices = {}
         
-        #self.coefs_name = self.output_filename+'_coefs.npy'
-        #self.coefs_name = 'reupd_coefs.npy'
-        
-        self.coefs_name = 's:%s_r:%s_g:%s_l3:%s_coefs.npy' % (str(float(self.bound1)),
-                                                           str(float(self.bound2)),
-                                                           str(float(self.bound3)),
-                                                           str(float(self.lambda3)))
-        
-        self.memmap_name = 'raw_data.npy'
-        self.sparse_matrix_name = 'sparse_matrix.mat'
-        
-        # results collectors:
-        self.l1_norms = []
-        self.l2_norms = []
-        self.graphnet_norms = []
-        self.accuracies = []
-        
-        
-        np.random.seed(self.random_seed)
-        random.seed(self.random_seed)
-        
-        self.variables_initialized = True
+        self.total_nifti_files = 0
         
         
     def load_data_matrix(self):
         
         memmap_path = os.path.join(self.bin_dir,self.memmap_name)
-        affine_path = os.path.join(self.bin_dir,'raw_affine.npy')
+        affine_path = os.path.join(self.bin_dir,self.affine_name)
         if os.path.exists(memmap_path):
             
             print 'loading in '+self.memmap_name
             
             self.raw_data_list = npf.open_memmap(memmap_path,mode='r',dtype='float32')
-            #self.raw_data_list = np.load(memmap_path)
 
             print 'shape of loaded memmap:'
             print self.raw_data_list.shape
-            
-            self.loaded_warm_start = True
             
         else:
             print 'no file of name '+self.memmap_name+' to load.'
@@ -127,51 +80,8 @@ class RegRegPipe(object):
             return False
         
         return True
-
-
-
-    def _coef_name_parser(self,name):
-        name = name.strip('/').split('_')
-        s = float(name[0].strip('s:'))
-        r = float(name[1].strip('r:'))
-        g = float(name[2].strip('g:'))
-        l3 = float(name[3].strip('l3:'))
-        return (s,r,g,l3)
-        
-        
-        
-    def load_coefs(self):
-
-        coefs_path = os.path.join(self.bin_dir,self.coefs_name)
-
-        if os.path.exists(coefs_path):
-            self.preloaded_coefs = np.load(coefs_path)
-            print 'Shape of problem coefs: '
-            print self.preloaded_coefs.shape
-            return True
-        else:
-            allcoefs = glob.glob(self.bin_dir+'/*coefs.npy')
-            if not allcoefs:
-                self.preloaded_coefs = np.array([])
-                print 'No recent coefs saved/found.'
-                return False
-            else:
-                match_calc = []
-                (s,r,g,l3) = self._coef_name_parser(self.coefs_name)
-                for match in allcoefs:
-                    match = os.path.split(match)[1]
-                    (cur_s,cur_r,cur_g,cur_l3) = self._coef_name_parser(match)
-                    match_calc.append(abs(s-cur_s) + abs(r-cur_r) + abs(g-cur_g) + abs(l3-cur_l3))
-                min_ind = match_calc.index(min(match_calc))
-                best_match = allcoefs[min_ind]
-                print 'Best match for coefs:  %s' % best_match
-                self.preloaded_coefs = np.load(best_match)
-                print 'Shape of problem coefs: '
-                print self.preloaded_coefs.shape
-                return True
-                
-             
-
+    
+    
     def __load_nifti(self,nifti):
         image = nib.load(nifti)
         shape = image.get_shape()
@@ -239,7 +149,7 @@ class RegRegPipe(object):
                         self.subject_trial_indices[nifti_iter] = []
                         nifti_iter += 1
                     
-                    if self.reg_experiment_trs == False:
+                    if not getattr(self, 'reg_experiment_trs', False) or self.reg_experiment_trs == False:
                         self.reg_experiment_trs = len(idata[3])
                         
                     if self.reg_total_trials == False:
@@ -248,16 +158,15 @@ class RegRegPipe(object):
 
                     if self.raw_affine == []:
                         self.raw_affine = affine
-                        affine_path = os.path.join(self.bin_dir,'raw_affine.npy')
+                        affine_path = os.path.join(self.bin_dir,self.affine_name)
                         np.save(affine_path,self.raw_affine)
                         
                     if self.raw_data_shape == []:
                         self.raw_data_shape = ishape
                         pprint(ishape)
-                        
-        
-        
-        
+    
+    
+    
     def __parse_vector(self,vector):
         vfile = open(vector,'rb')
         vlines = vfile.readlines()
@@ -275,7 +184,6 @@ class RegRegPipe(object):
     def parse_resp_vecs(self):
 
         for subject in self.reg_subjects:
-            print self.top_dir
             sub_path = os.path.join(self.top_dir,subject)
             print sub_path
             
@@ -294,6 +202,8 @@ class RegRegPipe(object):
         
     
     def create_reg_mask(self):
+        
+        print 'creating/loading mask'
         
         if self.reg_mask_dir:
             mask_path = os.path.join(self.top_dir,self.reg_mask_dir)
@@ -317,17 +227,19 @@ class RegRegPipe(object):
         
         tr_selection = [x-1 for x in self.trs_of_interest]
         
-        subject_trials = {}
+        self.subject_trials = {}
             
         if not self.lookback:
             self.lookback_trs = 0
         
        
         if not self.dynamic_iti:
+            print 'length of raw data list: %s' % str(len(self.raw_data_list))
+            print 'length of response vectors: %s' % str(len(self.resp_vecs))
 
             for s,(data,respvec) in enumerate(zip(self.raw_data_list,self.resp_vecs)):
                 
-                subject_trials[s] = []                
+                self.subject_trials[s] = []                
                 
                 onsetindices = [x*self.reg_trial_trs for x in range(self.reg_total_trials)]
                 respindices = respvec[[onset+(self.reg_response_tr-1) for onset in onsetindices]]
@@ -345,14 +257,14 @@ class RegRegPipe(object):
                         trs = [ind+tr+self.lag-self.lookback_trs for tr in tr_selection]
                         trial = data[:,:,:,trs]
                         resp = respindices[i]
-                        subject_trials[s].append([resp,trial])
-                            
+                        self.subject_trials[s].append([resp,trial])
+                                                    
 
         elif self.dynamic_iti:
 
             for s,(data,respvec,onsetvec) in enumerate(zip(self.raw_data_list,self.resp_vecs,self.onset_vecs)):
 
-                subject_trials[s] = []
+                self.subject_trials[s] = []
                 
                 onsetindices = np.nonzero(onsetvec)[0]
                 respindices = respvec[onsetindices]
@@ -368,12 +280,22 @@ class RegRegPipe(object):
                             trs = [ind+tr+self.lag-self.lookback_trs for tr in tr_selection]
                             trial = data[:,:,:,trs]
                             resp = respindices[i]
-                            subject_trials[s].append([resp,trial])
+                            self.subject_trials[s].append([resp,trial])
 
+
+    
+    def free_raw_data(self):
+        self.raw_data_list = None
+        del(self.raw_data_list)
+        gc.collect()
+
+
+
+    def generate_design_matrix(self):
 
         if not self.downsample_type:
 
-            for subj,trials in subject_trials.items():
+            for subj,trials in self.subject_trials.items():
                 self.subject_trial_indices[subj] = []
                 
                 for resp,trial in trials:
@@ -387,7 +309,7 @@ class RegRegPipe(object):
             positive_trials = []
             negative_trials = []
             
-            for subj,trials in subject_trials.items():
+            for subj,trials in self.subject_trials.items():
                 self.subject_trial_indices[subj] = []
                 for [resp,trial] in trials:
                     if float(resp) > 0:
@@ -437,9 +359,11 @@ class RegRegPipe(object):
             print 'response skew (positive/negative): %s' % str(sum(self.Y))
 
         
+        
         elif self.downsample_type == 'subject':
             
-            for subj,trials in subject_trials.items():
+            
+            for subj,trials in self.subject_trials.items():
                 self.subject_trial_indices[subj] = []
                 
                 subject_positives = []
@@ -490,8 +414,119 @@ class RegRegPipe(object):
                 print 'yes responses: %s' % str(self.Y.count(1))
                 print 'no responses: %s' % str(self.Y.count(-1))
                 print 'response skew (positive/negative): %s' % str(sum(self.Y))
+
+        
+    def instantiate_all(self, vars=None, nuke=False):
+        if not vars == None:
+            self._instantiate_vars(vars)
+    
+        self.create_reg_mask()
+        
+        data_found = False
+        if not nuke:
+            data_found = self.load_data_matrix()
+        if nuke or not data_found:
+            self.create_data_matrix()
+    
+        self.parse_resp_vecs()
+        self.combine_data_vectors()
+        self.generate_design_matrix()
+        self.free_raw_data()
+        
+    
+    def reinstantiate_design(self, vars=None):
+        if not vars == None:
+            self._instantiate_vars(vars)
+            
+        self.generate_design_matrix()
+    
+    
+
+
+class RegRegPipe(object):
+    
+    def __init__(self, rrdata):
+        super(RegRegPipe, self).__init__()
+        self._instantiate_rrdata(rrdata)
+        
+        if not getattr(self,'crossvalidation_type',None):
+            setattr(self,'crossvalidation_type','subject')
+            
+        
+        self.coefs_name = 's:%s_r:%s_g:%s_l3:%s_coefs.npy' % (str(float(self.bound1)),
+                                                           str(float(self.bound2)),
+                                                           str(float(self.bound3)),
+                                                           str(float(self.lambda3)))
+        # results collectors:
+        self.l1_norms = []
+        self.l2_norms = []
+        self.graphnet_norms = []
+        self.accuracies = []
+
+        np.random.seed(self.random_seed)
+        random.seed(self.random_seed)
         
         
+        
+    def _instantiate_rrdata(self, rrdata):
+        self.rrdata = rrdata
+        self.vars = self.rrdata.vars
+        
+        for key, value in self.vars.items():
+            setattr(self,key,value)
+            
+        self.design = self.rrdata.design
+        self.Y = self.rrdata.Y
+        self.subject_trial_indices = self.rrdata.subject_trial_indices
+        self.m = self.rrdata.m
+        self.mask_shape = self.rrdata.mask_shape
+        self.raw_affine = self.rrdata.raw_affine
+        self.raw_data_shape = self.rrdata.raw_data_shape
+
+
+
+
+    def _coef_name_parser(self,name):
+        name = name.strip('/').split('_')
+        s = float(name[0].strip('s:'))
+        r = float(name[1].strip('r:'))
+        g = float(name[2].strip('g:'))
+        l3 = float(name[3].strip('l3:'))
+        return (s,r,g,l3)
+        
+        
+        
+    def load_coefs(self):
+
+        coefs_path = os.path.join(self.bin_dir,self.coefs_name)
+
+        if os.path.exists(coefs_path):
+            self.preloaded_coefs = np.load(coefs_path)
+            print 'Shape of problem coefs: '
+            print self.preloaded_coefs.shape
+            return True
+        else:
+            allcoefs = glob.glob(self.bin_dir+'/*coefs.npy')
+            if not allcoefs:
+                self.preloaded_coefs = np.array([])
+                print 'No recent coefs saved/found.'
+                return False
+            else:
+                match_calc = []
+                (s,r,g,l3) = self._coef_name_parser(self.coefs_name)
+                for match in allcoefs:
+                    match = os.path.split(match)[1]
+                    (cur_s,cur_r,cur_g,cur_l3) = self._coef_name_parser(match)
+                    match_calc.append(abs(s-cur_s) + abs(r-cur_r) + abs(g-cur_g) + abs(l3-cur_l3))
+                min_ind = match_calc.index(min(match_calc))
+                best_match = allcoefs[min_ind]
+                print 'Best match for coefs:  %s' % best_match
+                self.preloaded_coefs = np.load(best_match)
+                print 'Shape of problem coefs: '
+                print self.preloaded_coefs.shape
+                return True
+                
+             
             
     def prepare_crossvalidation(self,leave_mod_in=False):
         
@@ -653,11 +688,25 @@ class RegRegPipe(object):
     def normalize(self,crossvalidate=False, train_trials=False, test_trials=False):
         #if not hasattr(self, 'X'):
         
+        # adding a global intercept as the first column
+        self.intercept = False
+        self.design = np.array(self.design)
+        if self.intercept:
+            self.design = np.hstack([np.ones((self.design.shape[0],1)), self.design])
+            self.image_selector = rr.selector(slice(1, None), self.design.shape[1:])
+        else:
+            self.image_selector = rr.identity(self.design.shape[1:])
+
         if not crossvalidate:
-            design = np.array(self.design)
-            # adding a global intercept as the first column
-            self.design = np.hstack([np.ones(design.shape[0]), design])
-            self.X = rr.normalize(self.design,center=True,scale=True,intercept_column=0)
+            if self.intercept:
+                X = rr.normalize(self.design,center=True,scale=True,intercept_column=0)
+                which0 = X.col_stds == 0
+                self.X = rr.affine_composition(X.slice_columns(~which0), rr.selector(~which0, self.design.shape[1:]))
+            else:
+                X = rr.normalize(self.design,center=True,scale=True)
+                which0 = X.col_stds == 0
+                self.X = rr.affine_composition(X.slice_columns(~which0), rr.selector(~which0, self.design.shape[1:]))
+
             self.Y_signs = np.array(self.Y)
             self.Y_binary = (self.Y_signs + 1) / 2.
             
@@ -666,8 +715,23 @@ class RegRegPipe(object):
             train_design = np.array([self.design[i] for i in train_trials])
             test_design = np.array([self.design[i] for i in test_trials])
             
-            self.X = rr.normalize(train_design,center=True,scale=True)
-            self.X_test = rr.normalize(test_design,center=True,scale=True)
+            import time
+            toc = time.time()
+            print 'starting_normalization'
+            if self.intercept:
+                X = rr.normalize(train_design,center=True,scale=True, intercept_column=0)
+                self.X_test = rr.normalize(test_design,center=True,scale=True, intercept_column=0)
+                which0 = X.col_stds == 0
+                self.X = rr.affine_composition(X.slice_columns(~which0), rr.selector(~which0, train_design.shape[1:]))
+
+            else:
+                X = rr.normalize(train_design,center=True,scale=True)
+                self.X_test = rr.normalize(test_design,center=True,scale=True)
+                which0 = X.col_stds == 0
+                self.X = rr.affine_composition(X.slice_columns(~which0), rr.selector(~which0, train_design.shape[1:]))
+                
+            tic = time.time()
+            print 'normalization time: %0.1f' % (tic-toc)
             
             print len(train_trials)
             print len(self.Y)
@@ -681,7 +745,7 @@ class RegRegPipe(object):
             self.Y_signs_test = np.array(self.Y_test)
             self.Y_binary_test = (self.Y_signs_test + 1) / 2
             
-        self.p = self.X.primal_shape
+        self.p = self.X.primal_shape 
         
     
     @property
@@ -703,7 +767,7 @@ class RegRegPipe(object):
                 
     
     def logistic_loss(self):
-        return rr.logistic_loglikelihood.linear(self.X,successes=self.Y_binary)
+        return rr.logistic_deviance.linear(self.X,successes=self.Y_binary)
 
     def quadratic_loss(self):
         return rr.quadratic.affine(self.X,-self.Y_signs,coef=0.5)
@@ -713,44 +777,62 @@ class RegRegPipe(object):
         
     @property
     def ridge_bound(self):
-        return rr.l2norm(self.p,bound=self.bound2)
+        p0 = self.image_selector.dual_shape
+        pen = rr.l2norm(p0,bound=self.bound2)
+        if self.intercept:
+            return rr.separable(self.image_selector.primal_shape, [pen], [self.image_selector.index_obj])
+        else:
+            return pen
 
     @property
     def ridge_bound_smooth(self):
-        return rr.smoothed_atom(self.ridge_bound, 0.001)
+        iq = rr.identity_quadratic(0.001,0,0,0)
+        return self.ridge_bound.smoothed(iq)
 
     @property
     def ridge(self):
         if self.lambda2 > 0:
-            return rr.quadratic(self.p,bound=self.lambda2)
+            return rr.quadratic.linear(self.image_selector,coef=self.lambda2)
         else:
             return None
         
     @property
     def sparsity(self):
+        p0 = self.image_selector.dual_shape
         if self.lambda1 > 0:
-            return rr.l1norm(self.p, lagrange=self.lambda1)
+            pen = rr.l1norm(p0,lagrange=self.lambda1)
+            if self.intercept:
+                return rr.separable(self.image_selector.primal_shape, [pen], [self.image_selector.index_obj])
+            return pen
         else:
             return None
 
     @property
     def sparsity_bound(self):
-        return rr.l1norm(self.p, bound=self.bound1)
-    
+        p0 = self.image_selector.dual_shape
+        pen = rr.l1norm(p0,bound=self.bound1)
+        if self.intercept:
+            return rr.separable(self.image_selector.primal_shape, [pen], [self.image_selector.index_obj])
+        else:
+            return pen
+
     @property
     def graphnet(self):
+        l = rr.affine_composition(self.D, self.image_selector)
         if self.lambda3 > 0:
-            return rr.quadratic.linear(self.D,coef=self.lambda3)
+            return rr.quadratic.linear(l,coef=self.lambda3)
         else:
             return None
 
     @property
     def graphnet_bound(self):
-        return rr.l2norm.linear(self.D,bound=self.bound3)
+        l = rr.affine_composition(self.D, self.image_selector)
+        return rr.l2norm.linear(l,bound=self.bound3)
 
     @property
     def graphnet_bound_smooth(self):
-        return rr.smoothed_atom(self.graphnet_bound, epsilon=0.001)
+        iq = rr.identity_quadratic(0.001,0,0,0)
+        return self.graphnet_bound.smoothed(iq)
 
     @property
     def penalty(self):
@@ -759,8 +841,9 @@ class RegRegPipe(object):
 
     def problem(self):
         loss = {'logistic': self.logistic_loss(),
-                'quadratic': self.quadratic_loss(),
-                'huber': self.huber_loss()}[self.loss]
+                'quadratic': self.quadratic_loss()# ,
+#                 'huber': self.huber_loss()
+                }[self.loss]
 
         return rr.container(loss, *self.penalty)
         
@@ -861,28 +944,16 @@ class RegRegPipe(object):
                 self.solution_shaped = np.zeros((self.mask_shape[0],self.mask_shape[1],
                                                  self.mask_shape[2],self.reg_prediction_tr_len))
                 # here, we remove the first column which was the intercept
-                self.solution_shaped[np.where(self.m)] = self.solution[1:]
+                self.solution_shaped[np.where(self.m)] = self.image_selector.linear_map(solution)
             
             else:
-                self.solution_shaped = self.solution[1:].reshape(self.raw_data_shape[0],
-                                                                 self.raw_data_shape[1],
-                                                                 self.raw_data_shape[2],
-                                                                 self.reg_prediction_tr_len)
+                self.solution_shaped = self.image_selector.linear_map(solution).reshape(self.raw_data_shape[0],
+                                                                                  self.raw_data_shape[1],
+                                                                                  self.raw_data_shape[2],
+                                                                                  self.reg_prediction_tr_len)
         
         
         
-    '''
-    FOR FUTURE:
-    Create map that displays accuracy per voxel.
-    
-    Calculate the accuracy per voxel by multiplying coefficient of voxel by
-    activation in that voxel.
-    
-    Multiply the value of that voxel by the number of coefficients in the solution
-    that are not zero. (as if the voxel/coefficient is the only one in the brain;
-    we will not sum the coefficients later)    
-    
-    '''
     
     def output_nii(self):
 
@@ -901,6 +972,8 @@ class RegRegPipe(object):
         shell_command(['adwarp','-apar',os.path.join(self.save_dir,'TT_N27+tlrc'),'-dpar',output_path+'+orig','-overwrite'])
         self.output_complete = True
         
+        
+        
     def _median(self,x):
         x = sorted(x)
         i = len(x)
@@ -908,6 +981,8 @@ class RegRegPipe(object):
             return (x[(i/2)-1]+x[i/2])/2.0
         else:
             return x[i/2]
+            
+            
         
     def log_session(self):
         
@@ -938,39 +1013,25 @@ class RegRegPipe(object):
     
     def run(self):
         
-        if self.variables_initialized:
-            data_found = False
-            
-            self.create_reg_mask() 
-            print 'done with mask'
-            if self.warm_start:
-                data_found = self.load_data_matrix()
-                coefs_found = self.load_coefs()
-            if not self.warm_start or not data_found:
-                self.create_data_matrix()
-                
-            self.parse_resp_vecs()
-            self.combine_data_vectors()
-            
-            cv_flag = self.prepare_crossvalidation()
-            
-            print 'RAW AFFINE:'
-            pprint(self.raw_affine)
-            
-            if cv_flag:
-                for train,test in zip(self.crossval_train,self.crossval_test):
-                    self.normalize(crossvalidate=True, train_trials=train, test_trials=test)
-                    self.solve_problem(crossvalidate=True, debug=True)
-            else:
-                self.normalize()    
-                self.solve_problem(debug=True)
-                self.output_nii()
-                
-            self.log_session()
-
-            
+        if self.warm_start:
+            coefs_found = self.load_coefs()
+        
+        cv_flag = self.prepare_crossvalidation()
+        
+        print 'RAW AFFINE:'
+        pprint(self.raw_affine)
+        
+        if cv_flag:
+            for train,test in zip(self.crossval_train,self.crossval_test):
+                self.normalize(crossvalidate=True, train_trials=train, test_trials=test)
+                self.solve_problem(crossvalidate=True, debug=True)
         else:
-            print '\nERROR: Impossible to run() without initializing variables.\n'
+            self.normalize()    
+            self.solve_problem(debug=True)
+            self.output_nii()
+            
+        self.log_session()
+
         
 
     
