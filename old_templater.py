@@ -3,7 +3,7 @@
 import sys, os
 import glob
 import api
-from RegRegPipe_n import RegRegPipe, RRData
+from RegRegPipe import RegRegPipe, RRData
 from pprint import pprint
 from MiniGridsearch import MiniGridsearch as MG
 import profile
@@ -112,7 +112,7 @@ if data_type == 'cni':
     # type either trial or subject:
     vars['crossvalidation_type'] = 'subject'
     vars['downsample_type'] = 'subject'
-    vars['with_replacement'] = True
+    vars['with_replacement'] = False
     
     vars['loss'] = 'quadratic'
     vars['penalties'] = ['sparsity_bound', 'graphnet_bound_smooth', 'ridge_bound_smooth','graphnet']
@@ -150,11 +150,13 @@ if data_type == 'cni':
 
 print vars['reg_subjects']
 
-rrdata = RRData(vars)
-rrdata.instantiate_all()
+if __name__ == "__main__":
 
-RegReg = RegRegPipe(rrdata)
-RegReg.run()
+    rrdata = RRData(vars)
+    rrdata.instantiate_all()
+
+    RegReg = RegRegPipe(rrdata)
+    RegReg.run()
 
 #minigrid = MG(vars, RegReg, prefix='wrsub')
 #minigrid.run()

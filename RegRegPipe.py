@@ -689,7 +689,7 @@ class RegRegPipe(object):
         #if not hasattr(self, 'X'):
         
         # adding a global intercept as the first column
-        self.intercept = False
+        self.intercept = True
         self.design = np.array(self.design)
         if self.intercept:
             self.design = np.hstack([np.ones((self.design.shape[0],1)), self.design])
@@ -699,13 +699,19 @@ class RegRegPipe(object):
 
         if not crossvalidate:
             if self.intercept:
-                X = rr.normalize(self.design,center=True,scale=True,intercept_column=0)
+                X = rr.normalize(self.design,center=True,scale=True,intercept_column=0, inplace=True)
                 which0 = X.col_stds == 0
-                self.X = rr.affine_composition(X.slice_columns(~which0), rr.selector(~which0, self.design.shape[1:]))
+#                self.X = rr.affine_composition(X.slice_columns(~which0), rr.selector(~which0, self.design.shape[1:]))
+                X = X.M
+                X[:,which0] = 0
+                self.X = rr.linear_transform(X)
             else:
-                X = rr.normalize(self.design,center=True,scale=True)
+                X = rr.normalize(self.design,center=True,scale=True, inplace=True)
                 which0 = X.col_stds == 0
-                self.X = rr.affine_composition(X.slice_columns(~which0), rr.selector(~which0, self.design.shape[1:]))
+#                self.X = rr.affine_composition(X.slice_columns(~which0), rr.selector(~which0, self.design.shape[1:]))
+                X = X.M
+                X[:,which0] = 0
+                self.X = rr.linear_transform(X)
 
             self.Y_signs = np.array(self.Y)
             self.Y_binary = (self.Y_signs + 1) / 2.
@@ -719,16 +725,22 @@ class RegRegPipe(object):
             toc = time.time()
             print 'starting_normalization'
             if self.intercept:
-                X = rr.normalize(train_design,center=True,scale=True, intercept_column=0)
-                self.X_test = rr.normalize(test_design,center=True,scale=True, intercept_column=0)
+                X = rr.normalize(train_design,center=True,scale=True, intercept_column=0, inplace=True)
+                self.X_test = rr.normalize(test_design,center=True,scale=True, intercept_column=0, inplace=True)
                 which0 = X.col_stds == 0
-                self.X = rr.affine_composition(X.slice_columns(~which0), rr.selector(~which0, train_design.shape[1:]))
+#                self.X = rr.affine_composition(X.slice_columns(~which0), rr.selector(~which0, train_design.shape[1:]))
+                X = X.M
+                X[:,which0] = 0
+                self.X = rr.linear_transform(X)
 
             else:
-                X = rr.normalize(train_design,center=True,scale=True)
-                self.X_test = rr.normalize(test_design,center=True,scale=True)
+                X = rr.normalize(train_design,center=True,scale=True, inplace=True)
+                self.X_test = rr.normalize(test_design,center=True,scale=True, inplace=True)
                 which0 = X.col_stds == 0
-                self.X = rr.affine_composition(X.slice_columns(~which0), rr.selector(~which0, train_design.shape[1:]))
+#                self.X = rr.affine_composition(X.slice_columns(~which0), rr.selector(~which0, train_design.shape[1:]))
+                X = X.M
+                X[:,which0] = 0
+                self.X = rr.linear_transform(X)
                 
             tic = time.time()
             print 'normalization time: %0.1f' % (tic-toc)
@@ -894,14 +906,17 @@ class RegRegPipe(object):
         # save the coefficients
         np.save(coefs_path,self.solution)
 
-        l1_norm = np.fabs(self.solution).sum()
-        l2_norm = np.linalg.norm(self.solution)
-        graphnet_norm = np.linalg.norm(self.D * self.solution)
+        image_solution = self.image_selector.linear_map(self.solution)
+
+        l1_norm = np.fabs(image_solution).sum()
+        l2_norm = np.linalg.norm(image_solution)
+        graphnet_norm = np.linalg.norm(self.D * image_solution)
         
         pprint('l1 norm: %f' % l1_norm)
         pprint('l2 norm: %f' % l2_norm)
         pprint('graphnet norm: %f' % graphnet_norm)
         
+
         self.l1_norms.append(l1_norm)
         self.l2_norms.append(l2_norm)
         self.graphnet_norms.append(graphnet_norm)
@@ -944,13 +959,13 @@ class RegRegPipe(object):
                 self.solution_shaped = np.zeros((self.mask_shape[0],self.mask_shape[1],
                                                  self.mask_shape[2],self.reg_prediction_tr_len))
                 # here, we remove the first column which was the intercept
-                self.solution_shaped[np.where(self.m)] = self.image_selector.linear_map(solution)
+                self.solution_shaped[np.where(self.m)] = image_solution
             
             else:
-                self.solution_shaped = self.image_selector.linear_map(solution).reshape(self.raw_data_shape[0],
-                                                                                  self.raw_data_shape[1],
-                                                                                  self.raw_data_shape[2],
-                                                                                  self.reg_prediction_tr_len)
+                self.solution_shaped = image_solution.reshape(self.raw_data_shape[0],
+                                                              self.raw_data_shape[1],
+                                                              self.raw_data_shape[2],
+                                                              self.reg_prediction_tr_len)
         
         
         
