@@ -601,10 +601,10 @@ class RegRegPipe(object):
                 
                 # assign the actual indices of trials in the design matrix to
                 # the crossvalidation test and training indices:
-                for brain in train_set:
-                    train_trials.extend(self.subject_trial_indices[brain])
-                for brain in test_set:
-                    test_trials.extend(self.subject_trial_indices[brain])
+                for subject in train_set:
+                    train_trials.extend(self.subject_trial_indices[subject])
+                for subject in test_set:
+                    test_trials.extend(self.subject_trial_indices[subject])
                     
                 #print '\nLength of training trials:'
                 #print len(train_trials)
@@ -691,56 +691,21 @@ class RegRegPipe(object):
         # adding a global intercept as the first column
         self.intercept = True
         self.design = np.array(self.design)
-        if self.intercept:
-            self.design = np.hstack([np.ones((self.design.shape[0],1)), self.design])
-            self.image_selector = rr.selector(slice(1, None), self.design.shape[1:])
-        else:
-            self.image_selector = rr.identity(self.design.shape[1:])
+
+        self.X, self.image_selector, self.intercept_selector = \
+            normalize_design(self.design, self.intercept, self.subject_trial_indices)
 
         if not crossvalidate:
-            if self.intercept:
-                X = rr.normalize(self.design,center=True,scale=True,intercept_column=0, inplace=True)
-                which0 = X.col_stds == 0
-#                self.X = rr.affine_composition(X.slice_columns(~which0), rr.selector(~which0, self.design.shape[1:]))
-                X = X.M
-                X[:,which0] = 0
-                self.X = rr.linear_transform(X)
-            else:
-                X = rr.normalize(self.design,center=True,scale=True, inplace=True)
-                which0 = X.col_stds == 0
-#                self.X = rr.affine_composition(X.slice_columns(~which0), rr.selector(~which0, self.design.shape[1:]))
-                X = X.M
-                X[:,which0] = 0
-                self.X = rr.linear_transform(X)
-
             self.Y_signs = np.array(self.Y)
             self.Y_binary = (self.Y_signs + 1) / 2.
             
         else:
 
-            train_design = np.array([self.design[i] for i in train_trials])
-            test_design = np.array([self.design[i] for i in test_trials])
+            train_design = self.X[train_trials]
+            test_design = self.X[test_trials]
             
-            import time
-            toc = time.time()
-            print 'starting_normalization'
-            if self.intercept:
-                X = rr.normalize(train_design,center=True,scale=True, intercept_column=0, inplace=True)
-                self.X_test = rr.normalize(test_design,center=True,scale=True, intercept_column=0, inplace=True)
-                which0 = X.col_stds == 0
-#                self.X = rr.affine_composition(X.slice_columns(~which0), rr.selector(~which0, train_design.shape[1:]))
-                X = X.M
-                X[:,which0] = 0
-                self.X = rr.linear_transform(X)
-
-            else:
-                X = rr.normalize(train_design,center=True,scale=True, inplace=True)
-                self.X_test = rr.normalize(test_design,center=True,scale=True, inplace=True)
-                which0 = X.col_stds == 0
-#                self.X = rr.affine_composition(X.slice_columns(~which0), rr.selector(~which0, train_design.shape[1:]))
-                X = X.M
-                X[:,which0] = 0
-                self.X = rr.linear_transform(X)
+            self.X = rr.linear_transform(train_design)
+            self.X_test = rr.linear_transform(test_design)
                 
             tic = time.time()
             print 'normalization time: %0.1f' % (tic-toc)
@@ -798,8 +763,15 @@ class RegRegPipe(object):
 
     @property
     def ridge_bound_smooth(self):
+        p0 = self.image_selector.dual_shape
+        pen = rr.l2norm(p0,bound=self.bound2)
         iq = rr.identity_quadratic(0.001,0,0,0)
-        return self.ridge_bound.smoothed(iq)
+        pens = pen.smoothed(iq)
+        if self.intercept:
+            p = rr.affine_smooth(pens, self.image_selector)
+        else:
+            p = pen
+        return p
 
     @property
     def ridge(self):
@@ -857,14 +829,29 @@ class RegRegPipe(object):
 #                 'huber': self.huber_loss()
                 }[self.loss]
 
-        return rr.container(loss, *self.penalty)
-        
+        use_container = False
+
+        def issmooth(p):
+            if isinstance(p, rr.smooth_atom) or isinstance(p, rr.smooth_composite):
+                return True
+            return False
+
+        if not use_container:
+            smooth_ps = [p for p in self.penalty if issmooth(p)]
+            nonsmooth_ps = [p for p in self.penalty if not issmooth(p)]
+            full_loss = theloss(*([loss] + smooth_ps))
+
+            if len(nonsmooth_ps) > 1:
+                raise ValueError('can only handle single nonsmooth right now')
+            return rr.simple_problem(full_loss, nonsmooth_ps[0])
+        else:
+            p = rr.container(loss, *self.penalty)
+            return p
 
     def solve_problem(self, crossvalidate=False, coef_multiplier=0.001, debug=False):
         
         problem = self.problem()
         #set up the problem solver (FISTA):
-        
         
         if not self.warm_start or not self.preloaded_coefs.any():
             
@@ -907,6 +894,10 @@ class RegRegPipe(object):
         np.save(coefs_path,self.solution)
 
         image_solution = self.image_selector.linear_map(self.solution)
+        if self.intercept_selector is not None:
+            intercept_solution = self.intercept_selector.linear_map(self.solution)
+        else:
+            intercept_solution = None
 
         l1_norm = np.fabs(image_solution).sum()
         l2_norm = np.linalg.norm(image_solution)
@@ -915,6 +906,9 @@ class RegRegPipe(object):
         pprint('l1 norm: %f' % l1_norm)
         pprint('l2 norm: %f' % l2_norm)
         pprint('graphnet norm: %f' % graphnet_norm)
+        if intercept_solution is not None:
+            #pprint('intercept: %f' % intercept_solution)
+            pprint(intercept_solution)
         
 
         self.l1_norms.append(l1_norm)
@@ -1028,6 +1022,7 @@ class RegRegPipe(object):
     
     def run(self):
         
+        
         if self.warm_start:
             coefs_found = self.load_coefs()
         
@@ -1047,9 +1042,69 @@ class RegRegPipe(object):
             
         self.log_session()
 
+
+def normalize_design(X, intercept, subject_trial_indices=None):
+    
+    Xn = rr.normalize(X, center=True, scale=True, inplace=True)
+    which0 = Xn.col_stds == 0
+    X = Xn.M
+    X[:,which0] = 0
+    del(Xn); gc.collect()
+
+    if intercept:
+        if subject_trial_indices is None: # a global intercept
+            X = np.hstack([np.ones((X.shape[0],1)), X])
+            image_selector = rr.selector(slice(1, None), X.shape[1:])
+            intercept_selector = rr.selector(slice(0, 1), X.shape[1:])
+        else:
+            new_cols = np.zeros((X.shape[0], len(subject_trial_indices)))
+            print 'INTERCEPT INFO:'
+            print 'new cols shape: %s' % str(np.shape(new_cols))
+            print 'X shape: %s' % str(np.shape(X))
+            indsum = 0
+            for colidx, (subj, indices) in enumerate(subject_trial_indices.items()):
+                #print 'Col: %s' % str(colidx)
+                new_col = np.zeros(X.shape[0])
+                new_col[indices] = 1
+                indsum = indsum + sum(new_col)
+                #print 'col sum: %s' % str(sum(new_col))
+                #print 'subject: %s' % str(subj)
+                #print 'subj ind len: %s' % str(len(indices))
+                new_cols[:,colidx] = new_col
+            print 
+            X = np.hstack([new_cols, X])
+            print 'intercepts sum: %s' % str(indsum)
+            print 'new X shape: %s' % str(np.shape(X))
+            image_selector = rr.selector(slice(new_cols.shape[1], None), X.shape[1:])
+            intercept_selector = rr.selector(slice(0, new_cols.shape[1]), X.shape[1:])
+    else:
+        image_selector = rr.identity(X.shape[1:])
+        intercept_selector = None
+
+    return rr.linear_transform(X), image_selector, intercept_selector
+
         
 
-    
+
+class theloss(rr.smooth_atom): # a hack way to combine smooth functions
+
+    def __init__(self, *smooth_atoms):
+        self.smooth_atoms = smooth_atoms
+        rr.smooth_atom.__init__(self,
+                                smooth_atoms[0].primal_shape)
+
+    def smooth_objective(self, x, mode='both', check_feasibility=False):
+        f, g = 0, 0
+        for atom in self.smooth_atoms:
+            if mode == 'grad':
+                g += atom.smooth_objective(x, mode='grad', check_feasibility=check_feasibility)
+            elif mode == 'func':
+                f += atom.smooth_objective(x, mode='func', check_feasibility=check_feasibility)
+            elif mode == 'both':
+                fc, gc = atom.smooth_objective(x, mode='both', check_feasibility=check_feasibility)
+                f += fc
+                g += gc
+        return {'both':(f,g), 'func':f, 'grad':g}[mode]
     
     
     
