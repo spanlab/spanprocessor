@@ -100,10 +100,11 @@ class RRData(object):
             
         if save_memmap:            
             # We need to determine how many nifti files there are in total to
-            # determine the shape of the memmap:
-            
+            # determine the shape of the memmap:    
             brainshape = []
 
+            # Iterate niftis by subjects; add total niftis together; get the
+            # shape of the brain from one of the niftis
             for subject in self.reg_subjects:
                 sub_path = os.path.join(self.top_dir,subject)
                 for nifti_name in self.reg_nifti_name:
@@ -113,8 +114,7 @@ class RRData(object):
                         if not brainshape:
                             [tempdata,tempaffine,brainshape] = self.__load_nifti(nifti_path)
                 
-            # Allocate the .npy memmap according to its size:
-            
+            # Allocate the .npy memmap according to the brain shape:
             memmap_shape = (self.total_nifti_files,brainshape[0],brainshape[1],brainshape[2],
                             brainshape[3])
             
@@ -129,6 +129,7 @@ class RRData(object):
             pprint(self.raw_data_list.shape)
             
         
+        # Iterate niftis by subject; add brain data from nifti to raw data array
         nifti_iter = 0
         for subject in self.reg_subjects:
             sub_path = os.path.join(self.top_dir,subject)
