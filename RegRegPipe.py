@@ -115,8 +115,22 @@ class RRData(object):
                             [tempdata,tempaffine,brainshape] = self.__load_nifti(nifti_path)
                 
             # Allocate the .npy memmap according to the brain shape:
-            memmap_shape = (self.total_nifti_files,brainshape[0],brainshape[1],brainshape[2],
-                            brainshape[3])
+            #memmap_shape = (self.total_nifti_files,brainshape[0],brainshape[1],brainshape[2],
+            #                brainshape[3])
+            
+            
+            # Allocate the .npy memmap according to the mask shape (and brain TRs):
+            memmap_shape = (self.total_nifti_files, self.mask_shape[0], self.mask_shape[1],
+                            self.mask_shape[2], brainshape[3])
+            
+            # Create a mask for all the TRs (mask before trial assignment)
+            # This will hopefully decrease the size of the memmap
+            self.full_mask = np.zeros([self.mask_shape[0],self.mask_shape[1],
+                                       self.mask_shape[2],brainshape[3]],np.bool)
+             
+            for i in range(brainshape[3]):
+                self.full_mask[:,:,:,i] = self.mask_data[:,:,:]
+            
             
             print 'Determined memmap shape:'
             print memmap_shape
@@ -146,6 +160,8 @@ class RRData(object):
                     
                     if save_memmap:
                         print 'Appending idata to memmap at: %s' % str(nifti_iter)
+                        idata = np.array(idata)
+                        idata = idata[self.full_mask]
                         self.raw_data_list[nifti_iter] = np.array(idata)
                         self.subject_trial_indices[nifti_iter] = []
                         nifti_iter += 1
@@ -301,7 +317,8 @@ class RRData(object):
                 
                 for resp,trial in trials:
                     self.subject_trial_indices[subj].append(len(self.design))
-                    self.design.append(trial[self.m])
+                    #self.design.append(trial[self.m])
+                    self.design.append(trial)
                     self.Y.append(resp)
 
 
@@ -314,9 +331,11 @@ class RRData(object):
                 self.subject_trial_indices[subj] = []
                 for [resp,trial] in trials:
                     if float(resp) > 0:
-                        positive_trials.append([subj,trial[self.m]])
+                        #positive_trials.append([subj,trial[self.m]])
+                        positive_trials.append([subj,trial])
                     elif float(resp) < 0:
-                        negative_trials.append([subj,trial[self.m]])
+                        #negative_trials.append([subj,trial[self.m]])
+                        negative_trials.append([subj,trial])
             
             
             random.shuffle(positive_trials)
@@ -372,9 +391,11 @@ class RRData(object):
                 
                 for [resp,trial] in trials:
                     if float(resp) > 0:
-                        subject_positives.append(trial[self.m])
+                        #subject_positives.append(trial[self.m])
+                        subject_positives.append(trial)
                     elif float(resp) < 0:
-                        subject_negatives.append(trial[self.m])
+                        #subject_negatives.append(trial[self.m])
+                        subject_negatives.append(trial)
             
                 random.shuffle(subject_positives)
                 random.shuffle(subject_negatives)
